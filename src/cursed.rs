@@ -1,12 +1,12 @@
 use nwg::Window;
 
 #[derive(Debug)]
-pub(crate) enum PlacementMode {
+pub enum PlacementMode {
 	REGULAR,
 	MINIMIZED,
 	MAXIMIZED,
 }
-pub(crate) fn getWindowPlacementMode(window: &Window) -> Result<PlacementMode, String> {
+pub fn getWindowPlacementMode(window: &Window) -> Result<PlacementMode, String> {
 	let handle = window.handle.hwnd();
 	if handle.is_none() {
 		return Err("Window is destroyed".to_string());

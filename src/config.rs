@@ -1,6 +1,7 @@
 use std::fs;
 use std::ptr::eq;
 use nwg::Window;
+use crate::ui::MWindow;
 
 #[derive(serde_derive::Deserialize, serde_derive::Serialize, Debug, Eq, Clone, Copy)]
 pub struct WindowBox {
@@ -11,7 +12,7 @@ pub struct WindowBox {
 }
 
 impl WindowBox {
-	pub fn new(window: &Window) -> Self {
+	pub fn new(window: &MWindow) -> Self {
 		let (x, y) = window.position();
 		let (width, height) = window.size();
 		Self {

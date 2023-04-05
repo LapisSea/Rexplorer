@@ -10,14 +10,15 @@ use std::cmp::min;
 use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
-use std::ops::Deref;
+use std::ops::{BitAnd, Deref};
 use std::ptr::eq;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::Thread;
 use std::time::Duration;
 
 use nwd::NwgUi;
-use nwg::{Event, EventHandler, fatal_message, NativeUi, Window, WindowFlags};
+use nwg::{Event, EventHandler, fatal_message, NativeUi, Window, WindowBuilder, WindowFlags};
 use nwg::MessageChoice::Retry;
 use nwg::stretch::{geometry::{Rect, Size}, style::{AlignSelf, Dimension as D, FlexDirection}};
 
@@ -74,67 +75,67 @@ impl BasicApp {
 	}
 }
 
+
 fn main() {
 	nwg::init().expect("Failed to init Native Windows GUI");
 	nwg::Font::set_global_family("Segoe UI").expect("Failed to set default font");
-	
-	let app = BasicApp::build_ui(Default::default()).expect("Failed to build UI");
 	
 	let orgState = config::readWindowBox().filter(|s| {
 		return s.width as i32 + s.x >= 0 &&
 			s.height as i32 + s.y >= 0;
 	});
 	
+	let res = ui::makeMain().map_err(|err| {
+		println!("Failed to make ui; {err}");
+	});
+	if res.is_err() { return; }
+	let window = res.unwrap();
+	
 	match orgState {
 		None => {
-			app.window.set_size(800, 600);
-			centerWindow(&app.window);
+			window.setSize(800, 600);
+			ui::centerWindow(&window);
 		}
 		Some(state) => {
-			app.window.set_size(state.width, state.height);
-			app.window.set_position(state.x, state.y);
+			window.setSize(state.width, state.height);
+			window.setPosition(state.x, state.y);
 		}
 	}
 	
 	
-	let info = WindowInfo::new(WindowBox::new(&app.window));
+	let info = WindowInfo::new(WindowBox::new(&window));
 	let info = Arc::new(Mutex::new(info));
 	
-	let infoC = Arc::clone(&info);
 	
-	let app = Arc::new(Mutex::new(app));
-	let app2 = Arc::clone(&app);
-	
-	let fun = move |e, data, handle| {
-		match e {
-			Event::OnResize | Event::OnMove => {
-				let app = app2.lock().unwrap();
-				let window = &app.window;
-				
-				match cursed::getWindowPlacementMode(window).unwrap_or(cursed::PlacementMode::MAXIMIZED)
-				{
-					cursed::PlacementMode::REGULAR => {}
-					cursed::PlacementMode::MINIMIZED | cursed::PlacementMode::MAXIMIZED => {
-						return;
-					}
-				}
-				
-				let b = WindowBox::new(&window);
-				if min(b.width, b.height) <= 0 { return; }
-				
-				infoC.lock().unwrap().winBox = b;
-			}
-			_ => {}
-		}
-	};
-	
-	let handler;
+	let window = Rc::new(window);
+	let fun;
 	{
-		let app = app.lock().unwrap();
-		app.window.set_visible(true);
-		handler = nwg::full_bind_event_handler(&app.window.handle, fun);
+		let info = info.clone();
+		let window = window.clone();
+		fun = move |e, _data, _handle| {
+			match e {
+				Event::OnResize | Event::OnMove => {
+					match window.getWindowPlacementMode().unwrap_or(cursed::PlacementMode::MAXIMIZED)
+					{
+						cursed::PlacementMode::REGULAR => {}
+						cursed::PlacementMode::MINIMIZED | cursed::PlacementMode::MAXIMIZED => {
+							return;
+						}
+					}
+					
+					let b = WindowBox::new(&window);
+					if min(b.width, b.height) <= 0 { return; }
+					
+					info.lock().unwrap().winBox = b;
+				}
+				_ => {}
+			}
+		};
 	}
-	watchState(Arc::clone(&info), orgState);
+	
+	window.setVisible(true);
+	let handler = nwg::full_bind_event_handler(&window.window.handle, fun);
+	watchState(&info, orgState);
 	
 	nwg::dispatch_thread_events();
 	nwg::unbind_event_handler(&handler);
@@ -144,7 +145,8 @@ fn main() {
 	info.destroyed = true;
 }
 
-fn watchState(window: Arc<Mutex<WindowInfo>>, orgState: Option<WindowBox>) {
+fn watchState(window: &Arc<Mutex<WindowInfo>>, orgState: Option<WindowBox>) {
+	let window = window.clone();
 	thread::spawn(move || {
 		let mut orgState = orgState.clone();
 		while true {
@@ -171,12 +173,4 @@ fn watchState(window: Arc<Mutex<WindowInfo>>, orgState: Option<WindowBox>) {
 			config::writeWindowBox(&state);
 		}
 	});
-}
-
-fn centerWindow(window: &Window) {
-	let (w, h) = window.size();
-	
-	let [top, left, width, height] = nwg::Monitor::monitor_rect_from_window(window);
-	
-	window.set_position(top + ((width - w as i32) / 2), left + ((height - h as i32) / 2));
 }
