@@ -1,7 +1,7 @@
 use std::fs;
 use std::ptr::eq;
-use nwg::Window;
-use crate::ui::MWindow;
+
+use slint::Window;
 
 #[derive(serde_derive::Deserialize, serde_derive::Serialize, Debug, Eq, Clone, Copy)]
 pub struct WindowBox {
@@ -12,9 +12,7 @@ pub struct WindowBox {
 }
 
 impl WindowBox {
-	pub fn new(window: &MWindow) -> Self {
-		let (x, y) = window.position();
-		let (width, height) = window.size();
+	pub fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
 		Self {
 			x,
 			y,
@@ -22,26 +20,42 @@ impl WindowBox {
 			height,
 		}
 	}
+	
+	pub fn fromWindow(window: &Window) -> Self {
+		let pos = window.position();
+		let siz = window.size();
+		Self {
+			x: pos.x,
+			y: pos.y,
+			width: siz.width,
+			height: siz.height,
+		}
+	}
 }
 
 impl PartialEq for WindowBox {
 	fn eq(&self, other: &WindowBox) -> bool {
-		return
 			self.x == other.x &&
 				self.y == other.y &&
 				self.width == other.width &&
-				self.height == other.height;
+				self.height == other.height
 	}
 }
 
 pub fn readWindowBox() -> Option<WindowBox> {
-	return fs::read_to_string("./WindowState.json")
+	fs::read_to_string("./WindowState.json")
 		.map_err(|err| {
 			println!("Config failed to read: {}", err);
 		})
 		.and_then(|data| serde_json::from_str(&data).map_err(|err| {
 			println!("Config malformed: {}", err);
-		})).ok();
+		}))
+		.ok()
+		.filter(validateData)
+}
+
+fn validateData(s: &WindowBox) -> bool {
+	s.width as i32 + s.x >= 0 && s.height as i32 + s.y >= 0
 }
 
 pub fn writeWindowBox(wbox: &WindowBox) {

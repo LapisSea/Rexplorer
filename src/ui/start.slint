@@ -1,0 +1,242 @@
+import {HorizontalBox, LineEdit, Button, ComboBox, GridBox , ScrollView,ListView, GroupBox} from "std-widgets.slint";
+
+
+export struct UIFile{
+	name: string,
+	fullPath: string,
+	icon: image,
+}
+export struct UIDirectoryInfo{
+	fullPath: string,
+	files: [UIFile],
+	status: string,
+}
+
+component FileBox inherits TouchArea{
+	in property <UIFile> data;
+	in property <int> size;
+	pure callback onFileOpen(string);
+	
+	property <bool> selected: false;
+	
+	fs:=FocusScope {
+		key-pressed(event) => {
+			// if(event.text == Key.UpArrow) {
+			// 	return accept;
+			// }
+			
+			// if(event.text == Key.RightArrow) {
+			// 	return accept;
+			// }
+			
+			// if(event.text == Key.LeftArrow) {
+			// 	return accept;
+			// }
+			
+			if (event.text == "\n") {
+				onFileOpen(data.fullPath);
+				return accept;
+			}
+			
+			if (event.text == " ") {
+				parent.clicked();
+				return accept;
+			}
+			
+			return reject;
+		}
+	}
+	
+	rect := Rectangle {
+		property <float> transp: 0;
+		
+		border-width: 1px;
+		border-color: rgba(0,0,0, 0.5);
+		background:  rgba(0.5,0.5,0.5, transp);
+		animate transp { duration: 70ms; }
+	}
+	VerticalLayout {
+		property <length> padd: 10px;
+		
+		Image {
+			property <length> siz: size*1px-padd*2;
+			
+			source: data.icon;
+			width: siz;
+			height: max(25px, siz*(data.icon.height/data.icon.width));
+		}
+		txt:=Text {
+			text:data.name;
+			vertical-alignment: center;
+			horizontal-alignment: center;
+			wrap: word-wrap;
+		}
+		padding: padd;
+		padding-bottom: padd*2/3;
+		spacing: padd/2;
+	}
+	
+	clicked => {
+		if(selected){
+			onFileOpen(data.fullPath);
+		}
+		selected=!selected;
+	}
+	
+	max-height: size*1px;
+	width: size*1px;
+	
+	states [ 
+		pressed when root.pressed: {
+			rect.transp: 0.4;
+		}
+		hover when root.has-hover: {
+			rect.transp: 0.2;
+		}
+		selectedState when selected:{
+			rect.transp: 0.4;
+		}
+		focused when fs.has-focus: {
+			rect.transp: 0.3;
+		}
+	]
+}
+
+
+component FileArea{
+	in property <UIDirectoryInfo> info;
+	//in property <bool> boxView;
+	in property <int> boxSize;
+	
+	pure callback onFileOpen(string);
+	
+	preferred-height: 100000000px;
+	
+	VerticalLayout {
+		HorizontalLayout {
+			Text {
+				text: "Path: ";
+				vertical-alignment: center;
+				horizontal-alignment: center;
+			}
+			LineEdit {
+				text: info.fullPath;
+				accepted(text) => { onFileOpen(text); }
+			}
+		}
+		
+		if info.files.length==0:VerticalLayout{
+			VerticalLayout {
+				padding: 15px;
+				Rectangle {}
+				 Text{
+					horizontal-alignment: center;
+					text: "Nothing to display right now:";
+					font-size: 19px;
+				}
+				Text{
+					horizontal-alignment: center;
+					font-size: 25px;
+					text: info.status;
+					wrap: word-wrap;
+				}
+				Rectangle {}
+			}
+		}
+		
+		if info.files.length > 0: ScrollView {
+			property <int> columns: floor((self.width/1px - 28)/(boxSize+10));
+			
+			
+			
+			VerticalLayout {
+				padding: 10px;
+				spacing: 10px;
+				
+				property <[UIFile]> files: info.files;
+				property <int> rows: ceil(files.length/columns);
+				// Text {text:"columns "+columns;}
+				// Text {text:"rows "+rows;}
+				
+				for row in rows: HorizontalLayout{
+					spacing: 10px;
+					for column in columns: VerticalLayout{
+						alignment: end;
+						// Text {text:"row "+row+" column "+column+ " idx "+(column+row*columns);}
+						if column+row*columns < files.length:
+						FileBox {
+							data: files[column+row*columns];
+							size: boxSize;
+							onFileOpen(d) => {
+								onFileOpen(d);
+							}
+						}
+					}
+				}
+				
+				Rectangle {}
+			}
+		}
+	}
+	
+	Rectangle {}
+}
+
+
+// export struct UIDirectoryInfo{
+// 	fullPath: string,
+// 	files: [UIFile],
+// 	status: string,
+
+export component HomeApp inherits Window {
+	
+	in property <UIDirectoryInfo> data: {
+		files: [
+			{name: "Peen 1",  fullPath: "<idk lol>", icon: @image-url("./Bulge.png")},
+			{name: "Peen 2",  fullPath: "<idk lol>", icon: @image-url("./Bulge.png")},
+			{name: "Peen 3",  fullPath: "<idk lol>", icon: @image-url("./Bulge.png")},
+			{name: "Peen 4",  fullPath: "<idk lol>", icon: @image-url("./Bulge.png")},
+			{name: "PP 5",    fullPath: "<idk lol>", icon: @image-url("./0001.jpg" )},
+			{name: "PP 6",    fullPath: "<idk lol>", icon: @image-url("./0001.jpg" )},
+			{name: "PP 7",    fullPath: "<idk lol>", icon: @image-url("./0001.jpg" )},
+			{name: "PP 8",    fullPath: "<idk lol>", icon: @image-url("./0001.jpg" )},
+			{name: "Peen 9",  fullPath: "<idk lol>", icon: @image-url("./Bulge.png")},
+			{name: "PP 10",   fullPath: "<idk lol>", icon: @image-url("./0001.jpg" )},
+			{name: "Peen 11", fullPath: "<idk lol>", icon: @image-url("./Bulge.png")},
+			{name: "PP 12",   fullPath: "<idk lol>", icon: @image-url("./0001.jpg" )},
+		],
+		fullPath: "<current path>",
+		status: "Data has not been loaded yet."
+	};
+	
+	pure callback onFileOpen(string);
+	
+	default-font-size: 15px;
+	
+	preferred-width: 800px;
+	preferred-height: 600px;
+	
+	title: "Rexplorer";
+	
+	
+	VerticalLayout{
+		HorizontalLayout {
+			Button {
+				text:"button idk";
+			}
+			Button {
+				text:"there will be stuff here";
+			}
+			Rectangle {}
+		}
+		
+		FileArea{
+			info: data;
+			boxSize: 150;
+			onFileOpen(d) => {
+				onFileOpen(d);
+			}
+		}
+		Text {text: "Bottom text";}
+	}
+}

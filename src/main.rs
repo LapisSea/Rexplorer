@@ -1,34 +1,39 @@
 #![allow(non_snake_case)]
 #![allow(unused_imports)]
+#![allow(dead_code)]
 
-extern crate native_windows_derive as nwd;
-extern crate native_windows_gui as nwg;
-
-use std::{env, fs, thread};
+use std::{default, env, fmt, fs, io, thread};
 use std::cell::Cell;
-use std::cmp::min;
+use std::cmp::{max, min};
+use std::collections::HashMap;
 use std::error::Error;
+use std::fmt::Display;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, ErrorKind};
+use std::io::Cursor;
 use std::ops::{BitAnd, Deref};
+use std::path::PathBuf;
 use std::ptr::eq;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::Thread;
 use std::time::Duration;
 
-use nwd::NwgUi;
-use nwg::{Event, EventHandler, fatal_message, NativeUi, Window, WindowBuilder, WindowFlags};
-use nwg::MessageChoice::Retry;
-use nwg::stretch::{geometry::{Rect, Size}, style::{AlignSelf, Dimension as D, FlexDirection}};
+use image::{ColorType, ImageFormat, load, Pixel, Rgba};
+use image::imageops::FilterType;
+use image::io::Reader as ImageReader;
+use platform::Platform;
+use slint;
+use slint::{Image, LogicalPosition, LogicalSize, Model, ModelRc, PhysicalPosition, PhysicalSize, platform, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString, SharedVector, Window, WindowPosition, WindowSize};
+use slint::private_unstable_api::re_exports::SharedVectorModel;
+use slint::private_unstable_api::re_exports::StandardButtonKind::Retry;
 
 use config::WindowBox;
 
-use crate::basic_app_ui::BasicAppUi;
-
-mod cursed;
 mod config;
 mod ui;
+
+slint::include_modules!();
 
 #[derive(Debug, Clone)]
 struct WindowInfo {
@@ -39,117 +44,221 @@ struct WindowInfo {
 impl WindowInfo {
 	fn new(winBox: WindowBox) -> Self {
 		Self {
-			winBox: winBox,
+			winBox,
 			destroyed: false,
 		}
 	}
 }
 
-
-#[derive(Default, NwgUi)]
-pub struct BasicApp {
-	#[nwg_control(title: "Rexplorer", flags: "WINDOW|MINIMIZE_BOX|MAXIMIZE_BOX|RESIZABLE")]
-	// #[nwg_events(OnWindowClose: [BasicApp::say_goodbye])]
-	window: Window,
-	
-	#[nwg_layout(parent: window, flex_direction: FlexDirection::Column)]
-	grid: nwg::FlexboxLayout,
-	
-	#[nwg_control(text: "Heisenberg", focus: true)]
-	#[nwg_layout_item(layout: grid, flex_grow: 0.0, min_size: Size { width: D::Points(60.0), height: D::Points(60.0)})]
-	name_edit: nwg::TextInput,
-	
-	#[nwg_control(text: "Say my name")]
-	#[nwg_layout_item(layout: grid, flex_grow: 1.0)]
-	#[nwg_events(OnButtonClick: [BasicApp::say_hello])]
-	hello_button: nwg::Button,
-}
-
-impl BasicApp {
-	fn say_hello(&self) {
-		nwg::modal_info_message(&self.window, "Hello", &format!("Hello {}", self.name_edit.text()));
-	}
-	
-	fn say_goodbye(&self) {
-		nwg::stop_thread_dispatch();
+impl Display for UIFile {
+	fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+		fmt.write_str(self.name.as_str())?;
+		fmt.write_str(" -> '")?;
+		fmt.write_str(self.fullPath.as_str())?;
+		fmt.write_str("'")?;
+		Ok(())
 	}
 }
-
 
 fn main() {
-	nwg::init().expect("Failed to init Native Windows GUI");
-	nwg::Font::set_global_family("Segoe UI").expect("Failed to set default font");
-	
-	let orgState = config::readWindowBox().filter(|s| {
-		return s.width as i32 + s.x >= 0 &&
-			s.height as i32 + s.y >= 0;
-	});
-	
-	let res = ui::makeMain().map_err(|err| {
-		println!("Failed to make ui; {err}");
-	});
-	if res.is_err() { return; }
-	let window = res.unwrap();
-	
-	match orgState {
-		None => {
-			window.setSize(800, 600);
-			ui::centerWindow(&window);
-		}
-		Some(state) => {
-			window.setSize(state.width, state.height);
-			window.setPosition(state.x, state.y);
-		}
-	}
-	
-	
-	let info = WindowInfo::new(WindowBox::new(&window));
-	let info = Arc::new(Mutex::new(info));
-	
-	
-	let window = Rc::new(window);
-	let fun;
+	let s = config::readWindowBox().unwrap_or_else(|| WindowBox::new(100, 100, 800, 600));
+	let app = Rc::new(HomeApp::new().unwrap());
+	let win = app.window();
 	{
-		let info = info.clone();
-		let window = window.clone();
-		fun = move |e, _data, _handle| {
-			match e {
-				Event::OnResize | Event::OnMove => {
-					match window.getWindowPlacementMode().unwrap_or(cursed::PlacementMode::MAXIMIZED)
-					{
-						cursed::PlacementMode::REGULAR => {}
-						cursed::PlacementMode::MINIMIZED | cursed::PlacementMode::MAXIMIZED => {
-							return;
-						}
+		let eApp = app.clone();
+		app.on_onFileOpen(move |f| {
+			let f = f.as_str();
+			let mut iconCache = HashMap::new();
+			match fetchInfo(&mut iconCache, f) {
+				PathInfo::Fail(_) => {}
+				PathInfo::Dir(d) => { eApp.set_data(d); }
+				PathInfo::File => {
+					if let Err(err) = open::that(f) {
+						println!("{}", err);
 					}
-					
-					let b = WindowBox::new(&window);
-					if min(b.width, b.height) <= 0 { return; }
-					
-					info.lock().unwrap().winBox = b;
 				}
-				_ => {}
 			}
-		};
+			eApp.window().request_redraw();
+		});
 	}
 	
-	window.setVisible(true);
-	let handler = nwg::full_bind_event_handler(&window.window.handle, fun);
-	watchState(&info, orgState);
+	if let Some(path) = home::home_dir() {
+		let mut iconCache = HashMap::new();
+		match fetchInfo(&mut iconCache, format!("{}", path.display()).as_str()) {
+			PathInfo::Fail(d) => { app.set_data(d) }
+			PathInfo::Dir(d) => { app.set_data(d) }
+			PathInfo::File => {}
+		}
+	}
 	
-	nwg::dispatch_thread_events();
-	nwg::unbind_event_handler(&handler);
 	
-	let mut info = info.lock().unwrap();
-	config::writeWindowBox(&info.winBox);
-	info.destroyed = true;
+	win.set_size(WindowSize::Physical(PhysicalSize::new(s.width, s.height)));
+	win.set_position(WindowPosition::Physical(PhysicalPosition::new(s.x, s.y)));
+	
+	app.run().unwrap();
+}
+
+fn loadIcon(iconCache: &mut HashMap<String, Image>, path: &str) -> Result<Image, String> {
+	{
+		let cached = iconCache.get(path);
+		match cached {
+			None => {}
+			Some(i) => { return Ok(i.clone()); }
+		}
+	}
+	
+	let maxItems = 1024 * 1024 * 8 / (128 * 128 * 4);
+	
+	if iconCache.len() >= maxItems {
+		let key = iconCache.keys().next().cloned().unwrap();
+		iconCache.remove(&key);
+	}
+	
+	let loaded = loadIconFs(path);
+	
+	match loaded {
+		Ok(loaded) => {
+			iconCache.insert(path.to_string(), loaded.clone());
+			Ok(loaded)
+		}
+		Err(err) => { Err(err) }
+	}
+}
+
+fn loadIconFs(path: &str) -> Result<Image, String> {
+	println!("Loading: {:?}", path);
+	
+	let mut img =
+		ImageReader::open(path)
+			.and_then(|i| i.with_guessed_format())
+			.map_err(|err| format!("{}", err))
+			.and_then(|i| i.decode().map_err(|err| format!("{}", err)))?;
+	
+	let s = max(img.width(), img.height());
+	let maxSiz = 256;
+	
+	if s > maxSiz {
+		let fac = maxSiz as f32 / s as f32;
+		img = img.resize(
+			(img.width() as f32 * fac) as u32,
+			(img.height() as f32 * fac) as u32,
+			FilterType::CatmullRom,
+		);
+	}
+	
+	let mut buffer = SharedPixelBuffer::new(img.width(), img.height());
+	let w = img.width();
+	let h = img.height();
+	let s: &mut [Rgba8Pixel] = buffer.make_mut_slice();
+	for x in 0..w {
+		for y in 0..h {
+			let p: Rgba<u8> = match img.color() {
+				ColorType::L8 => { img.as_luma8().unwrap().get_pixel(x, y).to_rgba() }
+				ColorType::La8 => { img.as_luma_alpha8().unwrap().get_pixel(x, y).to_rgba() },
+				ColorType::Rgb8 => { img.as_rgb8().unwrap().get_pixel(x, y).to_rgba() },
+				ColorType::Rgba8 => { *img.as_rgba8().unwrap().get_pixel(x, y) },
+				ColorType::L16 => { p16to8(img.as_luma16().unwrap().get_pixel(x, y).to_rgba()) },
+				ColorType::La16 => { p16to8(img.as_luma_alpha16().unwrap().get_pixel(x, y).to_rgba()) },
+				ColorType::Rgb16 => { p16to8(img.as_rgb16().unwrap().get_pixel(x, y).to_rgba()) },
+				ColorType::Rgba16 => { p16to8(img.as_rgba16().unwrap().get_pixel(x, y).to_rgba()) },
+				ColorType::Rgb32F => { pf32to8(img.as_rgb32f().unwrap().get_pixel(x, y).to_rgba()) },
+				ColorType::Rgba32F => { pf32to8(img.as_rgba32f().unwrap().get_pixel(x, y).to_rgba()) },
+				_ => todo!("Unimplemented format {:?}", img.color())
+			};
+			s[(x + y * w) as usize] = Rgba8Pixel::from([p[0], p[1], p[2], p[3]]);
+		}
+	}
+	
+	Ok(Image::from_rgba8(buffer))
+}
+
+fn p16to8(p: Rgba<u16>) -> Rgba<u8> {
+	Rgba::from([p[0] as u8, p[1] as u8, p[2] as u8, p[3] as u8])
+}
+
+fn pf32to8(p: Rgba<f32>) -> Rgba<u8> {
+	Rgba::from([p[0] as u8, p[1] as u8, p[2] as u8, p[3] as u8])
+}
+
+fn pathToUIFile(iconCache: &mut HashMap<String, Image>, path: PathBuf) -> Option<UIFile> {
+	let meta = fs::metadata(path.clone()).ok()?;
+	
+	let icon = match meta.is_dir() {
+		true => loadIcon(iconCache, "./../src/ui/win-folder.png")
+			.map_err(|err| println!("Failed to load image: {}", err))
+			.unwrap(),
+		false => {
+			let mut icon = None;
+			if path.extension().and_then(|s| s.to_str()).filter(|s| ["jpg", "png"].contains(s)).is_some() {
+				icon = loadIcon(iconCache, path.as_os_str().to_str().unwrap())
+					.map_err(|err| println!("Failed to load image: {}", err)).ok()
+			}
+			if icon.is_none() {
+				loadIcon(iconCache, "./../src/ui/default.png")
+					.map_err(|err| println!("Failed to load image: {}", err))
+					.unwrap()
+			} else {
+				icon.unwrap()
+			}
+		}
+	};
+	
+	Some(UIFile {
+		fullPath: SharedString::from(path.to_str().unwrap()),
+		icon,
+		name: SharedString::from(path.file_name().unwrap().to_str().unwrap()),
+	})
+}
+
+enum PathInfo {
+	Fail(UIDirectoryInfo),
+	Dir(UIDirectoryInfo),
+	File,
+}
+
+fn fetchInfo(iconCache: &mut HashMap<String, Image>, path: &str) -> PathInfo {
+	return match fs::read_dir(path) {
+		Ok(rd) => {
+			let mut data: SharedVector<UIFile> = Default::default();
+			
+			for path in rd {
+				// println!("{:?}", path);
+				let path = path.ok().map(|p| p.path());
+				if let Some(path) = path {
+					if let Some(uip) = pathToUIFile(iconCache, path) {
+						data.push(uip);
+					}
+				}
+			}
+			
+			
+			
+			return PathInfo::Dir(UIDirectoryInfo {
+				files: ModelRc::new(SharedVectorModel::from(data)),
+				fullPath: SharedString::from(path),
+				status: SharedString::from("Nothing here"),
+			});
+		}
+		Err(err) => {
+			if let Some(meta) = fs::metadata(path).ok() {
+				if meta.is_file() {
+					return PathInfo::File;
+				}
+			}
+			PathInfo::Fail(UIDirectoryInfo {
+				files: Default::default(),
+				fullPath: SharedString::from(path),
+				status: SharedString::from(format!("{}", err)),
+			})
+		}
+	};
 }
 
 fn watchState(window: &Arc<Mutex<WindowInfo>>, orgState: Option<WindowBox>) {
 	let window = window.clone();
 	thread::spawn(move || {
-		let mut orgState = orgState.clone();
-		while true {
+		let mut orgState = orgState;
+		loop {
 			thread::sleep(Duration::from_secs(1));
 			
 			let state: WindowBox;
@@ -158,7 +267,7 @@ fn watchState(window: &Arc<Mutex<WindowInfo>>, orgState: Option<WindowBox>) {
 				if window.destroyed {
 					return;
 				}
-				state = window.winBox.clone();
+				state = window.winBox;
 			}
 			
 			
