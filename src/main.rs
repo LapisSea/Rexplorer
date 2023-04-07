@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use slint;
+
 use slint::{ModelRc, PhysicalPosition, PhysicalSize, SharedString, SharedVector, WindowPosition, WindowSize};
 use slint::private_unstable_api::re_exports::SharedVectorModel;
 
@@ -138,12 +138,12 @@ fn loadFromPath(state: Arc<Mutex<State>>, path: PathBuf) -> Arc<RgbImg> {
 		icon = RgbImg::read(path.as_os_str().to_str().unwrap()).ok();
 	}
 	
-	icon.map(|u| Arc::new(u))
+	icon.map(Arc::new)
 	    .unwrap_or_else(|| state.lock().unwrap().defaultIco.clone())
 }
 
 fn fetchInfo(state: Arc<Mutex<State>>, path: &str) -> PathInfo {
-	return match fs::read_dir(path) {
+	match fs::read_dir(path) {
 		Ok(rd) => {
 			let paths: Vec<PathBuf> = rd.into_iter().filter_map(|p| p.ok()).map(|p| p.path()).collect();
 			
@@ -202,14 +202,14 @@ fn fetchInfo(state: Arc<Mutex<State>>, path: &str) -> PathInfo {
 			}
 			
 			
-			return PathInfo::Dir(UIDirectoryInfo {
+			PathInfo::Dir(UIDirectoryInfo {
 				files: ModelRc::new(SharedVectorModel::from(data)),
 				fullPath: SharedString::from(path),
 				status: SharedString::from("Nothing here"),
-			});
+			})
 		}
 		Err(err) => {
-			if let Some(meta) = fs::metadata(path).ok() {
+			if let Ok(meta) = fs::metadata(path) {
 				if meta.is_file() {
 					return PathInfo::File;
 				}
@@ -220,7 +220,7 @@ fn fetchInfo(state: Arc<Mutex<State>>, path: &str) -> PathInfo {
 				status: SharedString::from(format!("{}", err)),
 			})
 		}
-	};
+	}
 }
 
 fn watchState(window: &Arc<Mutex<WindowInfo>>, orgState: Option<WindowBox>) {
