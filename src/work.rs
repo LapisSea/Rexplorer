@@ -1,6 +1,4 @@
-use std::ops::Deref;
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::sync::Mutex;
 
 use lazy_static::lazy_static;
 use threadpool::ThreadPool;

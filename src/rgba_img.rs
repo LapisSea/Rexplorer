@@ -1,13 +1,9 @@
 use std::cmp::max;
 use std::io::Cursor;
 use std::ops::Deref;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 
-use image::{ColorType, ImageBuffer, Luma, LumaA, Pixel, Rgba};
+use image::{ColorType, Pixel, Rgba};
 use image::imageops::FilterType;
-use lazy_static::lazy_static;
 use rust_embed::RustEmbed;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 

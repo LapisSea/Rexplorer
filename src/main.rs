@@ -1,25 +1,17 @@
 #![allow(non_snake_case)]
-#![allow(unused_imports)]
 #![allow(dead_code)]
 
-use std::{env, fmt, fs, io, thread};
-use std::cmp::{max, min};
+use std::{env, fmt, fs, thread};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::fs::Metadata;
-use std::io::{ErrorKind, Read};
-use std::io::Cursor;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use image::{ColorType, ImageFormat, load, Pixel, Rgb, Rgba};
-use image::imageops::FilterType;
 use slint;
-use slint::{Image, LogicalSize, ModelRc, PhysicalPosition, PhysicalSize, platform, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString, SharedVector, Window, WindowPosition, WindowSize};
+use slint::{ModelRc, PhysicalPosition, PhysicalSize, SharedString, SharedVector, WindowPosition, WindowSize};
 use slint::private_unstable_api::re_exports::SharedVectorModel;
 
 use config::WindowBox;
@@ -27,7 +19,6 @@ use config::WindowBox;
 use crate::rgba_img::RgbImg;
 
 mod config;
-mod ui;
 mod rgba_img;
 mod work;
 

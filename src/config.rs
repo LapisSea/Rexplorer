@@ -1,5 +1,4 @@
 use std::fs;
-use std::ptr::eq;
 
 use slint::Window;
 

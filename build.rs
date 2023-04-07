@@ -1,12 +1,3 @@
-#[allow(non_snake_case)]
-#[allow(unused_imports)]
-#[allow(dead_code)]
-
-use std::{env, fs, io};
-use std::fs::{File, FileType, Metadata};
-use std::path::Path;
-use std::time::SystemTime;
-
 use slint_build::*;
 
 fn main() {
