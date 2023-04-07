@@ -16,6 +16,7 @@ home = "0.5.4"
 lazy_static = "1.4.0"
 image = "0.24.6"
 open = "4.0.1"
+rust-embed = { version="6.6.1", features=["include-exclude", "compression"] }
 
 [build-dependencies]
 slint-build = "1.0.0"

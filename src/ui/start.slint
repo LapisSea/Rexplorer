@@ -15,7 +15,7 @@ export struct UIDirectoryInfo{
 component FileBox inherits TouchArea{
 	in property <UIFile> data;
 	in property <int> size;
-	pure callback onFileOpen(string);
+	callback onFileOpen(string);
 	
 	property <bool> selected: false;
 	
@@ -108,7 +108,7 @@ component FileArea{
 	//in property <bool> boxView;
 	in property <int> boxSize;
 	
-	pure callback onFileOpen(string);
+	callback onFileOpen(string);
 	
 	preferred-height: 100000000px;
 	
@@ -119,7 +119,7 @@ component FileArea{
 				vertical-alignment: center;
 				horizontal-alignment: center;
 			}
-			LineEdit {
+			le:=LineEdit {
 				text: info.fullPath;
 				accepted(text) => { onFileOpen(text); }
 			}
@@ -169,6 +169,7 @@ component FileArea{
 							size: boxSize;
 							onFileOpen(d) => {
 								onFileOpen(d);
+								le.text=info.fullPath;
 							}
 						}
 					}
@@ -209,7 +210,7 @@ export component HomeApp inherits Window {
 		status: "Data has not been loaded yet."
 	};
 	
-	pure callback onFileOpen(string);
+	callback onFileOpen(string);
 	
 	default-font-size: 15px;
 	

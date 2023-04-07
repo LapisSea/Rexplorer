@@ -2,31 +2,25 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-use std::{default, env, fmt, fs, io, thread};
-use std::cell::Cell;
+use std::{env, fmt, fs, io, thread};
 use std::cmp::{max, min};
 use std::collections::HashMap;
-use std::error::Error;
 use std::fmt::Display;
-use std::fs::File;
-use std::io::{BufReader, ErrorKind};
+use std::io::{ErrorKind, Read};
 use std::io::Cursor;
-use std::ops::{BitAnd, Deref};
+use std::ops::Deref;
 use std::path::PathBuf;
-use std::ptr::eq;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
-use std::thread::Thread;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use image::{ColorType, ImageFormat, load, Pixel, Rgba};
 use image::imageops::FilterType;
 use image::io::Reader as ImageReader;
-use platform::Platform;
+use rust_embed::RustEmbed;
 use slint;
-use slint::{Image, LogicalPosition, LogicalSize, Model, ModelRc, PhysicalPosition, PhysicalSize, platform, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString, SharedVector, Window, WindowPosition, WindowSize};
+use slint::{Image, LogicalSize, ModelRc, PhysicalPosition, PhysicalSize, platform, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString, SharedVector, Window, WindowPosition, WindowSize};
 use slint::private_unstable_api::re_exports::SharedVectorModel;
-use slint::private_unstable_api::re_exports::StandardButtonKind::Retry;
 
 use config::WindowBox;
 
@@ -34,6 +28,12 @@ mod config;
 mod ui;
 
 slint::include_modules!();
+
+#[derive(RustEmbed)]
+#[folder = "src/ui/"]
+#[include = "*.png"]
+#[include = "*.jpg"]
+struct BuiltInAssets;
 
 #[derive(Debug, Clone)]
 struct WindowInfo {
@@ -70,7 +70,9 @@ fn main() {
 			let f = f.as_str();
 			let mut iconCache = HashMap::new();
 			match fetchInfo(&mut iconCache, f) {
-				PathInfo::Fail(_) => {}
+				PathInfo::Fail(d) => {
+					println!("{}: {}", d.fullPath.as_str(), d.status.as_str())
+				}
 				PathInfo::Dir(d) => { eApp.set_data(d); }
 				PathInfo::File => {
 					if let Err(err) = open::that(f) {
@@ -82,14 +84,21 @@ fn main() {
 		});
 	}
 	
-	if let Some(path) = home::home_dir() {
 		let mut iconCache = HashMap::new();
-		match fetchInfo(&mut iconCache, format!("{}", path.display()).as_str()) {
+		match fetchInfo(&mut iconCache, "C:\\Users\\LapisSea\\Desktop") {
 			PathInfo::Fail(d) => { app.set_data(d) }
 			PathInfo::Dir(d) => { app.set_data(d) }
 			PathInfo::File => {}
-		}
 	}
+	
+	// if let Some(path) = home::home_dir() {
+	// 	let mut iconCache = HashMap::new();
+	// 	match fetchInfo(&mut iconCache, format!("{}", path.display()).as_str()) {
+	// 		PathInfo::Fail(d) => { app.set_data(d) }
+	// 		PathInfo::Dir(d) => { app.set_data(d) }
+	// 		PathInfo::File => {}
+	// 	}
+	// }
 	
 	
 	win.set_size(WindowSize::Physical(PhysicalSize::new(s.width, s.height)));
@@ -126,13 +135,30 @@ fn loadIcon(iconCache: &mut HashMap<String, Image>, path: &str) -> Result<Image,
 }
 
 fn loadIconFs(path: &str) -> Result<Image, String> {
-	println!("Loading: {:?}", path);
+	let mut img = None;
 	
-	let mut img =
-		ImageReader::open(path)
+	if path.starts_with(">>") {
+		let p = &path[2..];
+		println!("Loading embeded: {:?}", p);
+		if let Some(asset) = BuiltInAssets::get(p) {
+			let reader = Cursor::new(asset.data.deref());
+			img = Some(ImageReader::new(reader)
+				.with_guessed_format()
+				.map_err(|err| format!("{}", err))
+				.and_then(|i| i.decode().map_err(|err| format!("{}", err)))?);
+		}
+	}
+	
+	if img.is_none() {
+		println!("Loading: {:?}", path);
+		img = Some(ImageReader::open(path)
 			.and_then(|i| i.with_guessed_format())
 			.map_err(|err| format!("{}", err))
-			.and_then(|i| i.decode().map_err(|err| format!("{}", err)))?;
+			.and_then(|i| i.decode().map_err(|err| format!("{}", err)))?);
+	}
+	
+	
+	let mut img = img.unwrap();
 	
 	let s = max(img.width(), img.height());
 	let maxSiz = 256;
@@ -184,9 +210,7 @@ fn pathToUIFile(iconCache: &mut HashMap<String, Image>, path: PathBuf) -> Option
 	let meta = fs::metadata(path.clone()).ok()?;
 	
 	let icon = match meta.is_dir() {
-		true => loadIcon(iconCache, "./../src/ui/win-folder.png")
-			.map_err(|err| println!("Failed to load image: {}", err))
-			.unwrap(),
+		true => loadIcon(iconCache, ">>win-folder.png").unwrap(),
 		false => {
 			let mut icon = None;
 			if path.extension().and_then(|s| s.to_str()).filter(|s| ["jpg", "png"].contains(s)).is_some() {
@@ -194,9 +218,7 @@ fn pathToUIFile(iconCache: &mut HashMap<String, Image>, path: PathBuf) -> Option
 					.map_err(|err| println!("Failed to load image: {}", err)).ok()
 			}
 			if icon.is_none() {
-				loadIcon(iconCache, "./../src/ui/default.png")
-					.map_err(|err| println!("Failed to load image: {}", err))
-					.unwrap()
+				loadIcon(iconCache, ">>default.png").unwrap()
 			} else {
 				icon.unwrap()
 			}
