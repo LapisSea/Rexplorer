@@ -4,8 +4,10 @@
 
 use std::{env, fmt, fs, io, thread};
 use std::cmp::{max, min};
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::fs::Metadata;
 use std::io::{ErrorKind, Read};
 use std::io::Cursor;
 use std::ops::Deref;
@@ -14,26 +16,22 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use image::{ColorType, ImageFormat, load, Pixel, Rgba};
+use image::{ColorType, ImageFormat, load, Pixel, Rgb, Rgba};
 use image::imageops::FilterType;
-use image::io::Reader as ImageReader;
-use rust_embed::RustEmbed;
 use slint;
 use slint::{Image, LogicalSize, ModelRc, PhysicalPosition, PhysicalSize, platform, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString, SharedVector, Window, WindowPosition, WindowSize};
 use slint::private_unstable_api::re_exports::SharedVectorModel;
 
 use config::WindowBox;
 
+use crate::rgba_img::RgbImg;
+
 mod config;
 mod ui;
+mod rgba_img;
+mod work;
 
 slint::include_modules!();
-
-#[derive(RustEmbed)]
-#[folder = "src/ui/"]
-#[include = "*.png"]
-#[include = "*.jpg"]
-struct BuiltInAssets;
 
 #[derive(Debug, Clone)]
 struct WindowInfo {
@@ -50,6 +48,18 @@ impl WindowInfo {
 	}
 }
 
+enum LoadStage<T> {
+	Loading,
+	Loaded(T),
+}
+
+struct State {
+	iconCache: HashMap<String, LoadStage<Arc<RgbImg>>>,
+	folderIco: Arc<RgbImg>,
+	defaultIco: Arc<RgbImg>,
+	
+}
+
 impl Display for UIFile {
 	fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
 		fmt.write_str(self.name.as_str())?;
@@ -61,15 +71,21 @@ impl Display for UIFile {
 }
 
 fn main() {
-	let s = config::readWindowBox().unwrap_or_else(|| WindowBox::new(100, 100, 800, 600));
 	let app = Rc::new(HomeApp::new().unwrap());
 	let win = app.window();
+	
+	let state = Arc::new(Mutex::new(State {
+		iconCache: HashMap::new(),
+		folderIco: Arc::new(RgbImg::read(">>win-folder.png").unwrap()),
+		defaultIco: Arc::new(RgbImg::read(">>default.png").unwrap()),
+	}));
+	
 	{
 		let eApp = app.clone();
+		let state = state.clone();
 		app.on_onFileOpen(move |f| {
 			let f = f.as_str();
-			let mut iconCache = HashMap::new();
-			match fetchInfo(&mut iconCache, f) {
+			match fetchInfo(state.clone(), f) {
 				PathInfo::Fail(d) => {
 					println!("{}: {}", d.fullPath.as_str(), d.status.as_str())
 				}
@@ -84,11 +100,10 @@ fn main() {
 		});
 	}
 	
-		let mut iconCache = HashMap::new();
-		match fetchInfo(&mut iconCache, "C:\\Users\\LapisSea\\Desktop") {
-			PathInfo::Fail(d) => { app.set_data(d) }
-			PathInfo::Dir(d) => { app.set_data(d) }
-			PathInfo::File => {}
+	match fetchInfo(state, "C:\\Users\\LapisSea\\Desktop") {
+		PathInfo::Fail(d) => { app.set_data(d) }
+		PathInfo::Dir(d) => { app.set_data(d) }
+		PathInfo::File => {}
 	}
 	
 	// if let Some(path) = home::home_dir() {
@@ -100,6 +115,7 @@ fn main() {
 	// 	}
 	// }
 	
+	let s = config::readWindowBox().unwrap_or_else(|| WindowBox::new(100, 100, 800, 600));
 	
 	win.set_size(WindowSize::Physical(PhysicalSize::new(s.width, s.height)));
 	win.set_position(WindowPosition::Physical(PhysicalPosition::new(s.x, s.y)));
@@ -107,130 +123,6 @@ fn main() {
 	app.run().unwrap();
 }
 
-fn loadIcon(iconCache: &mut HashMap<String, Image>, path: &str) -> Result<Image, String> {
-	{
-		let cached = iconCache.get(path);
-		match cached {
-			None => {}
-			Some(i) => { return Ok(i.clone()); }
-		}
-	}
-	
-	let maxItems = 1024 * 1024 * 8 / (128 * 128 * 4);
-	
-	if iconCache.len() >= maxItems {
-		let key = iconCache.keys().next().cloned().unwrap();
-		iconCache.remove(&key);
-	}
-	
-	let loaded = loadIconFs(path);
-	
-	match loaded {
-		Ok(loaded) => {
-			iconCache.insert(path.to_string(), loaded.clone());
-			Ok(loaded)
-		}
-		Err(err) => { Err(err) }
-	}
-}
-
-fn loadIconFs(path: &str) -> Result<Image, String> {
-	let mut img = None;
-	
-	if path.starts_with(">>") {
-		let p = &path[2..];
-		println!("Loading embeded: {:?}", p);
-		if let Some(asset) = BuiltInAssets::get(p) {
-			let reader = Cursor::new(asset.data.deref());
-			img = Some(ImageReader::new(reader)
-				.with_guessed_format()
-				.map_err(|err| format!("{}", err))
-				.and_then(|i| i.decode().map_err(|err| format!("{}", err)))?);
-		}
-	}
-	
-	if img.is_none() {
-		println!("Loading: {:?}", path);
-		img = Some(ImageReader::open(path)
-			.and_then(|i| i.with_guessed_format())
-			.map_err(|err| format!("{}", err))
-			.and_then(|i| i.decode().map_err(|err| format!("{}", err)))?);
-	}
-	
-	
-	let mut img = img.unwrap();
-	
-	let s = max(img.width(), img.height());
-	let maxSiz = 256;
-	
-	if s > maxSiz {
-		let fac = maxSiz as f32 / s as f32;
-		img = img.resize(
-			(img.width() as f32 * fac) as u32,
-			(img.height() as f32 * fac) as u32,
-			FilterType::CatmullRom,
-		);
-	}
-	
-	let mut buffer = SharedPixelBuffer::new(img.width(), img.height());
-	let w = img.width();
-	let h = img.height();
-	let s: &mut [Rgba8Pixel] = buffer.make_mut_slice();
-	for x in 0..w {
-		for y in 0..h {
-			let p: Rgba<u8> = match img.color() {
-				ColorType::L8 => { img.as_luma8().unwrap().get_pixel(x, y).to_rgba() }
-				ColorType::La8 => { img.as_luma_alpha8().unwrap().get_pixel(x, y).to_rgba() },
-				ColorType::Rgb8 => { img.as_rgb8().unwrap().get_pixel(x, y).to_rgba() },
-				ColorType::Rgba8 => { *img.as_rgba8().unwrap().get_pixel(x, y) },
-				ColorType::L16 => { p16to8(img.as_luma16().unwrap().get_pixel(x, y).to_rgba()) },
-				ColorType::La16 => { p16to8(img.as_luma_alpha16().unwrap().get_pixel(x, y).to_rgba()) },
-				ColorType::Rgb16 => { p16to8(img.as_rgb16().unwrap().get_pixel(x, y).to_rgba()) },
-				ColorType::Rgba16 => { p16to8(img.as_rgba16().unwrap().get_pixel(x, y).to_rgba()) },
-				ColorType::Rgb32F => { pf32to8(img.as_rgb32f().unwrap().get_pixel(x, y).to_rgba()) },
-				ColorType::Rgba32F => { pf32to8(img.as_rgba32f().unwrap().get_pixel(x, y).to_rgba()) },
-				_ => todo!("Unimplemented format {:?}", img.color())
-			};
-			s[(x + y * w) as usize] = Rgba8Pixel::from([p[0], p[1], p[2], p[3]]);
-		}
-	}
-	
-	Ok(Image::from_rgba8(buffer))
-}
-
-fn p16to8(p: Rgba<u16>) -> Rgba<u8> {
-	Rgba::from([p[0] as u8, p[1] as u8, p[2] as u8, p[3] as u8])
-}
-
-fn pf32to8(p: Rgba<f32>) -> Rgba<u8> {
-	Rgba::from([p[0] as u8, p[1] as u8, p[2] as u8, p[3] as u8])
-}
-
-fn pathToUIFile(iconCache: &mut HashMap<String, Image>, path: PathBuf) -> Option<UIFile> {
-	let meta = fs::metadata(path.clone()).ok()?;
-	
-	let icon = match meta.is_dir() {
-		true => loadIcon(iconCache, ">>win-folder.png").unwrap(),
-		false => {
-			let mut icon = None;
-			if path.extension().and_then(|s| s.to_str()).filter(|s| ["jpg", "png"].contains(s)).is_some() {
-				icon = loadIcon(iconCache, path.as_os_str().to_str().unwrap())
-					.map_err(|err| println!("Failed to load image: {}", err)).ok()
-			}
-			if icon.is_none() {
-				loadIcon(iconCache, ">>default.png").unwrap()
-			} else {
-				icon.unwrap()
-			}
-		}
-	};
-	
-	Some(UIFile {
-		fullPath: SharedString::from(path.to_str().unwrap()),
-		icon,
-		name: SharedString::from(path.file_name().unwrap().to_str().unwrap()),
-	})
-}
 
 enum PathInfo {
 	Fail(UIDirectoryInfo),
@@ -238,21 +130,85 @@ enum PathInfo {
 	File,
 }
 
-fn fetchInfo(iconCache: &mut HashMap<String, Image>, path: &str) -> PathInfo {
+fn loadFromPath(state: Arc<Mutex<State>>, path: PathBuf) -> Arc<RgbImg> {
+	match fs::metadata(path.clone()).ok() {
+		None => {
+			return state.lock().unwrap().defaultIco.clone();
+		}
+		Some(meta) => {
+			if meta.is_dir() {
+				return state.lock().unwrap().folderIco.clone();
+			}
+		}
+	}
+	
+	let mut icon = None;
+	if path.extension().and_then(|s| s.to_str()).filter(|s| ["jpg", "png"].contains(s)).is_some() {
+		icon = RgbImg::read(path.as_os_str().to_str().unwrap()).ok();
+	}
+	
+	icon.map(|u| Arc::new(u))
+	    .unwrap_or_else(|| state.lock().unwrap().defaultIco.clone())
+}
+
+fn fetchInfo(state: Arc<Mutex<State>>, path: &str) -> PathInfo {
 	return match fs::read_dir(path) {
 		Ok(rd) => {
-			let mut data: SharedVector<UIFile> = Default::default();
+			let paths: Vec<PathBuf> = rd.into_iter().filter_map(|p| p.ok()).map(|p| p.path()).collect();
 			
-			for path in rd {
-				// println!("{:?}", path);
-				let path = path.ok().map(|p| p.path());
-				if let Some(path) = path {
-					if let Some(uip) = pathToUIFile(iconCache, path) {
-						data.push(uip);
-					}
+			for path in paths.clone() {
+				let state = state.clone();
+				{
+					let mut state = state.lock().unwrap();
+					let strPath = path.to_str().unwrap();
+					match state.iconCache.entry(strPath.to_string()) {
+						Entry::Occupied(e) => {
+							if let LoadStage::Loaded(_) = e.get() {
+								continue;
+							}
+						}
+						Entry::Vacant(e) => {
+							e.insert(LoadStage::Loading);
+						}
+					};
 				}
+				
+				work::execute(move || {
+					let strPath = path.to_str().unwrap();
+					println!("Async loading {}", strPath);
+					let img = loadFromPath(state.clone(), path.clone());
+					let mut state = state.lock().unwrap();
+					state.iconCache.insert(strPath.to_string(), LoadStage::Loaded(img));
+					println!("Async loaded {}", strPath);
+				});
 			}
 			
+			let mut data: SharedVector<UIFile> = Default::default();
+			for path in paths {
+				let icon;
+				let strPath = path.to_str().unwrap();
+				loop {
+					let state = state.lock().unwrap();
+					match state.iconCache.get(strPath).unwrap() {
+						LoadStage::Loading => {
+							drop(state);
+							thread::sleep(Duration::from_millis(5));
+							continue;
+						}
+						LoadStage::Loaded(r) => {
+							icon = r.clone();
+							// println!("Loaded {}", strPath);
+							break;
+						}
+					};
+				}
+				
+				data.push(UIFile {
+					fullPath: SharedString::from(path.to_str().unwrap()),
+					icon: icon.asImage(),
+					name: SharedString::from(path.file_name().unwrap().to_str().unwrap()),
+				});
+			}
 			
 			
 			return PathInfo::Dir(UIDirectoryInfo {
