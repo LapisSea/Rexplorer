@@ -19,6 +19,8 @@ component FileBox inherits TouchArea{
 	
 	property <bool> selected: false;
 	
+	mouse-cursor: pointer;
+	
 	fs:=FocusScope {
 		key-pressed(event) => {
 			// if(event.text == Key.UpArrow) {
@@ -165,27 +167,49 @@ component FileArea{
 				property <[UIFile]> files: info.files;
 				property <int> rows: ceil(files.length/columns);
 				property <length> inBetween: rows==1 ? 10px : (freeSpace - boxSize*columns)/(columns+1)*1px;
-				Text {text:"inBetween "+inBetween/1px;}
-				// Text {text:"columns "+columns;}
-				// Text {text:"rows "+rows;}
 				
-				for row in rows: HorizontalLayout{
-					spacing: inBetween;
-					Rectangle {
-						width:0px;
-					}
-					for column in columns: VerticalLayout{
-						alignment: end;
-						// Text {text:"row "+row+" column "+column+ " idx "+(column+row*columns);}
-						if column+row*columns < files.length:
-						FileBox {
-							data: files[column+row*columns];
-							size: boxSize;
-							onFileOpen(d) => {
-								onFileOpen(d);
-								le.text=info.fullPath;
+				// Text {text:" columns. "+columns+" rows: "+rows+" inBetween: "+inBetween/1px;}
+				
+				property<int> max:50;
+				
+				
+				if files.length <= max:VerticalLayout{
+					for row in rows: HorizontalLayout{
+						spacing: inBetween;
+						Rectangle {
+							width:0px;
+						}
+						for column in columns: VerticalLayout{
+							alignment: end;
+							// Text {text:"row "+row+" column "+column+ " idx "+(column+row*columns);}
+							if column+row*columns < files.length:
+							FileBox {
+								data: files[column+row*columns];
+								size: boxSize;
+								onFileOpen(d) => {
+									onFileOpen(d);
+									le.text=info.fullPath;
+								}
 							}
 						}
+					}
+				}
+				
+				if files.length > max:Rectangle {
+					width:10px;
+					height: rows*(boxSize + 30)*1px+10px;
+					
+					for i in info.files.length:FileBox {
+						data: files[i];
+						size: boxSize;
+						onFileOpen(d) => {
+							onFileOpen(d);
+							le.text=info.fullPath;
+						}
+						
+						x: mod(i, columns)*(boxSize + inBetween/1px)*1px + inBetween;
+						y: floor(i/columns)*(boxSize + 30)*1px;
+						height: (boxSize+20)*1px;
 					}
 				}
 				
