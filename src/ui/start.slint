@@ -50,13 +50,20 @@ component FileBox inherits TouchArea{
 	rect := Rectangle {
 		property <float> transp: 0;
 		
-		border-width: 1px;
+		border-width: 0px;
 		border-color: rgba(0,0,0, 0.5);
 		background:  rgba(0.5,0.5,0.5, transp);
 		animate transp { duration: 70ms; }
+		animate border-width { duration: 200ms; }
+		
+		states [
+			focused when fs.has-focus: {
+				rect.border-width: 2px;
+			}
+		 ]
 	}
 	VerticalLayout {
-		property <length> padd: 10px;
+		property <length> padd: 5px;
 		
 		Image {
 			property <length> siz: size*1px-padd*2;
@@ -83,6 +90,7 @@ component FileBox inherits TouchArea{
 		selected=!selected;
 	}
 	
+	
 	max-height: size*1px;
 	width: size*1px;
 	
@@ -95,9 +103,6 @@ component FileBox inherits TouchArea{
 		}
 		selectedState when selected:{
 			rect.transp: 0.4;
-		}
-		focused when fs.has-focus: {
-			rect.transp: 0.3;
 		}
 	]
 }
@@ -121,7 +126,10 @@ component FileArea{
 			}
 			le:=LineEdit {
 				text: info.fullPath;
-				accepted(text) => { onFileOpen(text); }
+				accepted(text) => { 
+					onFileOpen(text);
+					le.text=info.fullPath;
+				 }
 			}
 		}
 		
