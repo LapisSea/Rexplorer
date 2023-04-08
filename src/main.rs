@@ -2,11 +2,11 @@
 #![allow(dead_code)]
 
 use std::{env, fmt, fs, thread};
+use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
 use std::fmt::Display;
-use std::fs::ReadDir;
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -14,8 +14,8 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
-use serde_json::ser::Formatter;
-use slint::{Model, ModelRc, PhysicalPosition, PhysicalSize, SharedString, SharedVector, Timer, TimerMode, WindowPosition, WindowSize};
+use rand::Rng;
+use slint::{Image, Model, ModelRc, PhysicalPosition, PhysicalSize, SharedString, SharedVector, Timer, TimerMode, WindowPosition, WindowSize};
 use slint::private_unstable_api::re_exports::SharedVectorModel;
 
 use config::WindowBox;
@@ -45,7 +45,12 @@ impl WindowInfo {
 
 enum LoadStage<T> {
 	Loading,
-	Loaded(T),
+	Loaded(SystemTime, T),
+}
+
+struct DirectoryReader {
+	loader: Arc<UIDirectoryInfoLoader>,
+	receiver: Receiver<FileLoaderAction>,
 }
 
 struct State {
@@ -69,29 +74,38 @@ fn main() {
 	let app = Rc::new(HomeApp::new().unwrap());
 	let win = app.window();
 	
-	let directory: Rc<Mutex<Option<Arc<(Arc<UIDirectoryInfoLoader>, Receiver<FileLoaderAction>)>>>> = Rc::new(Mutex::new(None));
-	
 	let state = Arc::new(Mutex::new(State {
 		iconCache: HashMap::new(),
 		folderIco: Arc::new(RgbImg::read(">>win-folder.png").unwrap()),
 		defaultIco: Arc::new(RgbImg::read(">>default.png").unwrap()),
 		loaderId: 1,
 	}));
+	gcIcons(state.clone());
+	
+	
+	let dirReader = Rc::new(Mutex::new(None));
+	
+	let timer = Timer::default();
 	
 	{
-		let directory = directory.clone();
 		let tmpApp = app.clone();
 		let app = app.clone();
 		let state = state.clone();
+		let dirReader = dirReader.clone();
 		tmpApp.on_onFileOpen(move |f| {
 			let f = f.as_str();
 			match fetchInfo(state.clone(), f) {
 				PathInfo::Fail(d) => {
-					let d = &d.deref().0;
+					let d = d.loader;
+					
 					println!("{}: {}", d.fullPath.as_str(), d.status.as_str())
 				}
 				PathInfo::Dir(d) => {
-					*directory.lock().unwrap() = Some(d);
+					let mut model = app.get_data();
+					model.fullPath = SharedString::from(&d.loader.fullPath);
+					app.set_data(model);
+					
+					*dirReader.lock().unwrap() = Some(d);
 				}
 				PathInfo::File => {
 					if let Err(err) = open::that(f) {
@@ -112,22 +126,29 @@ fn main() {
 	// 		PathInfo::File => {}
 	// 	}
 	// }
-	match fetchInfo(state, "C:\\Users\\LapisSea\\Desktop") {
-		PathInfo::Fail(d) => { *directory.lock().unwrap() = Some(d); }
+	match fetchInfo(state.clone(), "C:\\Users\\LapisSea\\Desktop") {
+		PathInfo::Fail(d) => { *dirReader.lock().unwrap() = Some(d); }
 		PathInfo::Dir(d) => {
-			*directory.lock().unwrap() = Some(d);
+			let mut model = app.get_data();
+			model.fullPath = SharedString::from(&d.loader.fullPath);
+			app.set_data(model);
+			
+			*dirReader.lock().unwrap() = Some(d);
 		}
 		PathInfo::File => {}
 	}
 	
+	let defaultIcon = { state.lock().unwrap().defaultIco.asImage() };
+	let defaultIcon = Rc::new(defaultIcon);
+	
 	let tApp = app.clone();
-	let timer = Timer::default();
-	timer.start(TimerMode::Repeated, Duration::from_millis(5), move || {
+	timer.start(TimerMode::Repeated, Duration::from_millis(30), move || {
 		let mut discard = false;
 		{
-			let directory = directory.lock().unwrap();
+			let directory = dirReader.lock().unwrap();
 			if let Some(tup) = directory.deref() {
-				let (dir, rec) = tup.deref();
+				let dir = &tup.loader;
+				let rec = &tup.receiver;
 				
 				let mut model = tApp.get_data();
 				let mut dirty = false;
@@ -139,40 +160,45 @@ fn main() {
 					match action {
 						FileLoaderAction::MakeUI => {
 							model = dir.makeUI();
-							for i in 0..model.files.row_count() {
-								dirtyPos.insert(i);
-							}
+							dirtyPos.reserve(model.files.row_count());
+							(0..model.files.row_count()).for_each(|i| { dirtyPos.insert(i); });
 							dirty = true;
 						}
 						FileLoaderAction::UpdateFile(idx) => {
 							dirty = true;
 							dirtyPos.insert(idx);
-							if dirtyPos.len() >= 50 { break; }
+							// if dirtyPos.len() >= 50 { break; }
 						}
 						FileLoaderAction::End => {
 							discard = true;
 						}
 					}
-					// let now = SystemTime::now();
-					// if now.duration_since(start).unwrap() > Duration::from_millis(30) {
-					// 	println!("TIMEOUT");
-					// 	break;
-					// }
 				}
 				
 				if dirty {
+					fn makeImg(default: &Rc<Image>, file: &mut UIFile, fileLoader: &UIFileLoader) {
+						let rgb = fileLoader.icon.lock().unwrap();
+						
+						file.icon = if rgb.isDefault() {
+							default.deref().clone()
+						} else {
+							rgb.asImage()
+						}
+					}
+					
 					println!("{}", dirtyPos.len());
 					match dirtyPos.len() {
 						0 => {}
-						1 => {
-							let pos = *dirtyPos.iter().next().unwrap();
-							let mut file = model.files.row_data(pos).unwrap();
-							
-							let fileLoader = dir.files.get(pos).unwrap();
-							{
-								file.icon = fileLoader.icon.lock().unwrap().asImage();
+						1..=5 => {
+							for pos in dirtyPos {
+								let mut file = model.files.row_data(pos).unwrap();
+								
+								let fileLoader = dir.files.get(pos).unwrap();
+								
+								makeImg(&defaultIcon, &mut file, fileLoader);
+								
+								model.files.set_row_data(pos, file);
 							}
-							model.files.set_row_data(pos, file);
 						}
 						_ => {
 							let mut fileVec: SharedVector<UIFile> = Default::default();
@@ -180,12 +206,10 @@ fn main() {
 								fileVec.push(x);
 							}
 							
-							let mut slice = fileVec.make_mut_slice();
+							let slice = fileVec.make_mut_slice();
 							for idx in dirtyPos {
 								let fileLoader = dir.files.get(idx).unwrap();
-								{
-									slice[idx].icon = fileLoader.icon.lock().unwrap().asImage();
-								}
+								makeImg(&defaultIcon, &mut slice[idx], fileLoader);
 							}
 							
 							model = UIDirectoryInfo {
@@ -202,7 +226,7 @@ fn main() {
 			}
 		}
 		if discard {
-			*directory.lock().unwrap() = None;
+			*dirReader.lock().unwrap() = None;
 			println!("Done updating.");
 		}
 	});
@@ -213,6 +237,41 @@ fn main() {
 	win.set_position(WindowPosition::Physical(PhysicalPosition::new(s.x, s.y)));
 	
 	app.run().unwrap();
+}
+
+fn gcIcons(state: Arc<Mutex<State>>) {
+	thread::spawn(move || {
+		let mut rng = rand::thread_rng();
+		loop {
+			sleep(Duration::from_millis(500));
+			
+			let mut state = state.lock().unwrap();
+			let cache = &mut state.iconCache;
+			
+			let now = SystemTime::now();
+			
+			cache.retain(|k, val| {
+				match val {
+					LoadStage::Loading => {}
+					LoadStage::Loaded(t, _) => {
+						let age = now.duration_since(*t).unwrap().as_secs_f64();
+						
+						let minAge = 5.0;
+						let maxAge = 120.0;
+						if age > minAge {
+							let fac = 1.0_f64.min((age - minAge) / (maxAge - minAge));
+							let fac = fac.powi(4);
+							if rng.gen_bool(fac) {
+								println!("Yeet {k} \t {age} with probability of {fac}");
+								return false;
+							}
+						}
+					}
+				}
+				true
+			});
+		}
+	});
 }
 
 enum FileLoaderAction {
@@ -263,8 +322,8 @@ impl UIDirectoryInfoLoader {
 }
 
 enum PathInfo {
-	Fail(Arc<(Arc<UIDirectoryInfoLoader>, Receiver<FileLoaderAction>)>),
-	Dir(Arc<(Arc<UIDirectoryInfoLoader>, Receiver<FileLoaderAction>)>),
+	Fail(DirectoryReader),
+	Dir(DirectoryReader),
 	File,
 }
 
@@ -321,6 +380,8 @@ fn resolveInfoAsync(state: Arc<Mutex<State>>, paths: Vec<PathBuf>, dest: Arc<UID
 	thread::spawn(move || {
 		if checkID(state.clone(), dest.clone(), send.clone()) { return; }
 		
+		let mut loadingIdx = vec![];
+		
 		//Spawn tasks
 		for (i, path) in paths.clone().into_iter().enumerate() {
 			let state = state.clone();
@@ -328,8 +389,10 @@ fn resolveInfoAsync(state: Arc<Mutex<State>>, paths: Vec<PathBuf>, dest: Arc<UID
 				let mut state = state.lock().unwrap();
 				let strPath = path.to_str().unwrap();
 				match state.iconCache.entry(strPath.to_string()) {
-					Entry::Occupied(e) => {
-						if let LoadStage::Loaded(_) = e.get() {
+					Entry::Occupied(mut e) => {
+						if let LoadStage::Loaded(t, loaded) = e.get_mut() {
+							*t = SystemTime::now();
+							*dest.files[i].icon.lock().unwrap() = loaded.clone();
 							continue;
 						}
 					}
@@ -338,6 +401,8 @@ fn resolveInfoAsync(state: Arc<Mutex<State>>, paths: Vec<PathBuf>, dest: Arc<UID
 					}
 				};
 			}
+			loadingIdx.push(i);
+			
 			let dest = dest.clone();
 			if checkID(state.clone(), dest.clone(), send.clone()) { return; }
 			
@@ -351,22 +416,23 @@ fn resolveInfoAsync(state: Arc<Mutex<State>>, paths: Vec<PathBuf>, dest: Arc<UID
 				{
 					let state = state.clone();
 					let mut state = state.lock().unwrap();
-					state.iconCache.insert(strPath.to_string(), LoadStage::Loaded(img.clone()));
+					state.iconCache.insert(strPath.to_string(), LoadStage::Loaded(SystemTime::now(), img.clone()));
 				}
 				// println!("Async loaded {}", strPath);
 				
 				if !img.isDefault() {
 					if checkID(state.clone(), dest.clone(), send.clone()) { return; }
 					
-					let _ = send.send(FileLoaderAction::UpdateFile(i));
 					let file = dest.files.get(i).unwrap();
 					*file.icon.lock().unwrap() = img;
+					let _ = send.send(FileLoaderAction::UpdateFile(i));
 				}
 			});
 		}
 		
 		//Collect results
-		for (i, path) in paths.iter().enumerate() {
+		for i in loadingIdx {
+			let path = &paths[i];
 			let icon;
 			let strPath = path.to_str().unwrap();
 			loop {
@@ -379,7 +445,7 @@ fn resolveInfoAsync(state: Arc<Mutex<State>>, paths: Vec<PathBuf>, dest: Arc<UID
 						sleep(Duration::from_millis(50));
 						continue;
 					}
-					LoadStage::Loaded(r) => {
+					LoadStage::Loaded(t, r) => {
 						icon = r.clone();
 						// println!("Loaded {}", strPath);
 						break;
@@ -387,13 +453,13 @@ fn resolveInfoAsync(state: Arc<Mutex<State>>, paths: Vec<PathBuf>, dest: Arc<UID
 				};
 			}
 			
-			// if !icon.isDefault() {
-			// 	if checkID(state.clone(), dest.clone(), send.clone()) { return; }
-			//
-			// 	let _=send.send(FileLoaderAction::UpdateFile(i));
-			// 	let file = dest.files.get(i).unwrap();
-			// 	*file.icon.lock().unwrap() = icon;
-			// }
+			if !icon.isDefault() {
+				if checkID(state.clone(), dest.clone(), send.clone()) { return; }
+				
+				let file = dest.files.get(i).unwrap();
+				*file.icon.lock().unwrap() = icon;
+				let _ = send.send(FileLoaderAction::UpdateFile(i));
+			}
 		}
 		let _ = send.send(FileLoaderAction::End);
 	});
@@ -440,7 +506,10 @@ fn fetchInfo(state: Arc<Mutex<State>>, path: &str) -> PathInfo {
 				status: "Loading... please wait".to_string(),
 			});
 			resolveInfoAsync(state, paths, res.clone(), send);
-			PathInfo::Dir(Arc::new((res, receive)))
+			PathInfo::Dir(DirectoryReader {
+				loader: res,
+				receiver: receive,
+			})
 		}
 		Err(err) => {
 			if let Ok(meta) = fs::metadata(path) {
@@ -451,12 +520,15 @@ fn fetchInfo(state: Arc<Mutex<State>>, path: &str) -> PathInfo {
 			let (send, receive) = channel();
 			send.send(FileLoaderAction::MakeUI).unwrap();
 			
-			PathInfo::Fail(Arc::new((Arc::new(UIDirectoryInfoLoader {
-				loaderId: 0,
-				files: Default::default(),
-				fullPath: path.to_string(),
-				status: format!("{}", err),
-			}), receive)))
+			PathInfo::Fail(DirectoryReader {
+				loader: Arc::new(UIDirectoryInfoLoader {
+					loaderId: 0,
+					files: Default::default(),
+					fullPath: path.to_string(),
+					status: format!("{}", err),
+				}),
+				receiver: receive,
+			})
 		}
 	}
 }
