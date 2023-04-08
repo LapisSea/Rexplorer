@@ -11,7 +11,7 @@ build = "build.rs"
 serde = "1.0.159"
 serde_json = "1.0.48"
 serde_derive = "1.0.48"
-slint = "1.0.0"
+slint = {version="1.0.0", features=["backend-qt"]}
 home = "0.5.4"
 lazy_static = "1.4.0"
 image = "0.24.6"
@@ -21,3 +21,8 @@ threadpool = "1.8.1"
 
 [build-dependencies]
 slint-build = "1.0.0"
+
+[en]
+qmake = "C:\\Programming\\Qt\\6.5.0\\mingw_64\\"
+SLINT_STYLE = "native"
+SLINT_BACKEND="Qt"
