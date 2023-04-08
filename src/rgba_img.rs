@@ -18,9 +18,12 @@ pub struct RgbImg {
 	pixels: Vec<Rgba8Pixel>,
 	width: u32,
 	height: u32,
+	isDefault: bool,
 }
 
 impl RgbImg {
+	pub fn isDefault(&self) -> bool { self.isDefault }
+	
 	pub fn asImage(&self) -> Image {
 		let mut buffer = SharedPixelBuffer::new(self.width, self.height);
 		let buff = buffer.make_mut_slice();
@@ -35,7 +38,7 @@ impl RgbImg {
 		let mut img = None;
 		
 		if let Some(p) = path.strip_prefix(">>") {
-			println!("Loading embeded: {:?}", p);
+			// println!("Loading embeded: {:?}", p);
 			if let Some(asset) = BuiltInAssets::get(p) {
 				let reader = Cursor::new(asset.data.deref());
 				img = Some(ImageReader::new(reader)
@@ -46,7 +49,7 @@ impl RgbImg {
 		}
 		
 		if img.is_none() {
-			println!("Loading: {:?}", path);
+			// println!("Loading: {:?}", path);
 			
 			img = Some(ImageReader::open(path)
 				.and_then(|i| i.with_guessed_format())
@@ -161,6 +164,7 @@ impl RgbImg {
 			pixels: s,
 			width: w,
 			height: h,
+			isDefault: path.eq(">>default.png"),
 		})
 	}
 }
