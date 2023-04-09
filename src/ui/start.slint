@@ -71,8 +71,7 @@ component FileBox inherits TouchArea{
 			property <length> siz: size*1px-padd*2;
 			
 			source: data.icon;
-			width: siz;
-			height: max(25px, siz*(data.icon.height/data.icon.width));
+			height: min(siz*(data.icon.height/data.icon.width), siz*(data.icon.width/data.icon.height));
 		}
 		txt:=Text {
 			text:data.name;
