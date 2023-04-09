@@ -2,7 +2,6 @@
 #![allow(dead_code)]
 
 use std::{env, fmt, fs, thread};
-use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
 use std::fmt::Display;
@@ -20,28 +19,15 @@ use slint::private_unstable_api::re_exports::SharedVectorModel;
 
 use config::WindowBox;
 
+use crate::config::WindowInfo;
 use crate::rgba_img::RgbImg;
 
 mod config;
 mod rgba_img;
 mod work;
+mod icon;
 
 slint::include_modules!();
-
-#[derive(Debug, Clone)]
-struct WindowInfo {
-	winBox: WindowBox,
-	destroyed: bool,
-}
-
-impl WindowInfo {
-	fn new(winBox: WindowBox) -> Self {
-		Self {
-			winBox,
-			destroyed: false,
-		}
-	}
-}
 
 enum LoadStage<T> {
 	Loading,
@@ -72,7 +58,9 @@ impl Display for UIFile {
 
 fn main() {
 	let app = Rc::new(HomeApp::new().unwrap());
-	let win = app.window();
+	
+	let timer = Timer::default();
+	windowPersistence(app.clone(),&timer);
 	
 	let state = Arc::new(Mutex::new(State {
 		iconCache: HashMap::new(),
@@ -84,8 +72,6 @@ fn main() {
 	
 	
 	let dirReader = Rc::new(Mutex::new(None));
-	
-	let timer = Timer::default();
 	
 	{
 		let tmpApp = app.clone();
@@ -142,6 +128,7 @@ fn main() {
 	let defaultIcon = Rc::new(defaultIcon);
 	
 	let tApp = app.clone();
+	let timer = Timer::default();
 	timer.start(TimerMode::Repeated, Duration::from_millis(30), move || {
 		let mut discard = false;
 		{
@@ -186,7 +173,6 @@ fn main() {
 						}
 					}
 					
-					println!("{}", dirtyPos.len());
 					match dirtyPos.len() {
 						0 => {}
 						1..=5 => {
@@ -231,12 +217,28 @@ fn main() {
 		}
 	});
 	
-	let s = config::readWindowBox().unwrap_or_else(|| WindowBox::new(100, 100, 800, 600));
-	
-	win.set_size(WindowSize::Physical(PhysicalSize::new(s.width, s.height)));
-	win.set_position(WindowPosition::Physical(PhysicalPosition::new(s.x, s.y)));
-	
 	app.run().unwrap();
+}
+
+fn windowPersistence(app: Rc<HomeApp>, timer: &Timer){
+	let windowState;
+	{
+		let org = config::readWindowBox();
+		let s = org.unwrap_or_else(|| WindowBox::new(100, 100, 800, 600));
+		
+		let win = app.window();
+		win.set_size(WindowSize::Physical(PhysicalSize::new(s.width, s.height)));
+		win.set_position(WindowPosition::Physical(PhysicalPosition::new(s.x, s.y)));
+		
+		windowState = Arc::new(Mutex::new(WindowInfo::new(s)));
+		config::watchState(windowState.clone(), org);
+	}
+	
+	let tApp = app.clone();
+	timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
+		let mut info = windowState.lock().unwrap();
+		info.winBox = WindowBox::fromWindow(tApp.window());
+	});
 }
 
 fn gcIcons(state: Arc<Mutex<State>>) {
@@ -262,7 +264,7 @@ fn gcIcons(state: Arc<Mutex<State>>) {
 							let fac = 1.0_f64.min((age - minAge) / (maxAge - minAge));
 							let fac = fac.powi(4);
 							if rng.gen_bool(fac) {
-								println!("Yeet {k} \t {age} with probability of {fac}");
+								// println!("Yeet {k} \t {age} with probability of {fac}");
 								return false;
 							}
 						}
@@ -466,6 +468,12 @@ fn resolveInfoAsync(state: Arc<Mutex<State>>, paths: Vec<PathBuf>, dest: Arc<UID
 }
 
 fn fetchInfo(state: Arc<Mutex<State>>, path: &str) -> PathInfo {
+	for x in ["", ".", "./"] {
+		if x.eq(path) {
+			return failPathInfo(path, "Invalid path".to_string());
+		}
+	}
+	
 	match fs::read_dir(path) {
 		Ok(rd) => {
 			let loaderId;
@@ -517,48 +525,24 @@ fn fetchInfo(state: Arc<Mutex<State>>, path: &str) -> PathInfo {
 					return PathInfo::File;
 				}
 			}
-			let (send, receive) = channel();
-			send.send(FileLoaderAction::MakeUI).unwrap();
 			
-			PathInfo::Fail(DirectoryReader {
-				loader: Arc::new(UIDirectoryInfoLoader {
-					loaderId: 0,
-					files: Default::default(),
-					fullPath: path.to_string(),
-					status: format!("{}", err),
-				}),
-				receiver: receive,
-			})
+			failPathInfo(path, format!("{}", err))
 		}
 	}
 }
 
-fn watchState(window: &Arc<Mutex<WindowInfo>>, orgState: Option<WindowBox>) {
-	let window = window.clone();
-	thread::spawn(move || {
-		let mut orgState = orgState;
-		loop {
-			sleep(Duration::from_secs(1));
-			
-			let state: WindowBox;
-			{
-				let window = window.lock().unwrap();
-				if window.destroyed {
-					return;
-				}
-				state = window.winBox;
-			}
-			
-			
-			if orgState.filter(|s| { s.eq(&state) }).is_some() {
-				continue;
-			}
-			
-			//println!("Change:\n{:?}\n{:?}", Some(state), orgState);
-			
-			orgState = Some(state);
-			
-			config::writeWindowBox(&state);
-		}
-	});
+fn failPathInfo(path: &str, err: String) -> PathInfo {
+	let path = path.to_string();
+	let (send, receive) = channel();
+	send.send(FileLoaderAction::MakeUI).unwrap();
+	
+	PathInfo::Fail(DirectoryReader {
+		loader: Arc::new(UIDirectoryInfoLoader {
+			loaderId: 0,
+			files: Default::default(),
+			fullPath: path,
+			status: err,
+		}),
+		receiver: receive,
+	})
 }
