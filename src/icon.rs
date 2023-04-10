@@ -233,7 +233,7 @@ pub fn startIconGC(state: Arc<RwLock<GlobalIcons>>) {
 							let fac = 1.0_f64.min((age - minAge) / (maxAge - minAge));
 							let fac = fac.powi(4);
 							if rng.gen_bool(fac) {
-								if !ico.isDefault() { println!("Yeet {k} \t {age} with probability of {fac}"); }
+								// if !ico.isDefault() { println!("Yeet {k} \t {age} with probability of {fac}"); }
 								return false;
 							}
 						}

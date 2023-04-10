@@ -1,2 +1,8 @@
-/target
-/run
+/*
+!/.idea
+!/src
+!.gitignore
+!build.rs
+!Cargo.lock
+!Cargo.toml
+!Rexplorer.iml

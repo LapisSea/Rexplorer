@@ -2,16 +2,20 @@
 #![allow(dead_code)]
 
 use std::{env, fmt, fs, thread};
+use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fmt::Display;
 use std::ops::Deref;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
+use normpath::{BasePath, PathExt};
 use rand::Rng;
 use slint::{Image, Model, ModelRc, PhysicalPosition, PhysicalSize, SharedString, SharedVector, Timer, TimerMode, WindowPosition, WindowSize};
 use slint::private_unstable_api::re_exports::SharedVectorModel;
@@ -84,28 +88,28 @@ fn main() {
 	}
 	
 	
-	// if let Some(path) = home::home_dir() {
-	// 	let mut iconCache = HashMap::new();
-	// 	match fetchInfo(&mut iconCache, format!("{}", path.display()).as_str()) {
-	// 		PathInfo::Fail(d) => { app.set_data(d) }
-	// 		PathInfo::Dir(d) => { app.set_data(d) }
-	// 		PathInfo::File => {}
-	// 	}
-	// }
-	let homePath = "C:\\Users\\LapisSea\\Desktop";
-	match fetchInfo(globalIcon.clone(), homePath) {
-		PathInfo::Fail(d) => {
-			app.set_data(UIDirectoryInfo {
-				files: Default::default(),
-				fullPath: SharedString::from(homePath),
-				status: SharedString::from(d),
-			})
+	
+	if let Some(homePath) = home::home_dir().or_else(|| {
+		fs::canonicalize(".").ok().map(|p| {
+			let mut f = p.as_path();
+			while let Some(parent) = f.parent() { f = parent; }
+			PathBuf::from(f)
+		})
+	}).and_then(|p| p.to_str().map(|s| s.to_string())) {
+		match fetchInfo(globalIcon.clone(), &homePath) {
+			PathInfo::Fail(d) => {
+				app.set_data(UIDirectoryInfo {
+					files: Default::default(),
+					fullPath: SharedString::from(homePath),
+					status: SharedString::from(d),
+				})
+			}
+			PathInfo::Dir(d) => {
+				app.set_data(d.directory.clone());
+				*dirReader.lock().unwrap() = Some(d);
+			}
+			PathInfo::File => {}
 		}
-		PathInfo::Dir(d) => {
-			app.set_data(d.directory.clone());
-			*dirReader.lock().unwrap() = Some(d);
-		}
-		PathInfo::File => {}
 	}
 	
 	let defaultIcon = Rc::new(globalIcon.read().unwrap().default.asImage());
@@ -229,7 +233,22 @@ enum PathInfo {
 	File,
 }
 
+fn normalizePath(path: &str) -> String {
+	if let Ok(norm) = Path::new(path).normalize_virtually() {
+		return norm.as_os_str().to_str().unwrap().to_string();
+		// let l = &*norm.localize_name();
+		// let l = l.to_str().unwrap();
+		// let l = l.to_string();
+		// return l;
+	}
+	
+	path.to_string()
+}
+
 fn fetchInfo(state: Arc<RwLock<GlobalIcons>>, path: &str) -> PathInfo {
+	println!("{}, {}", path, normalizePath(path));
+	let path = &normalizePath(path);
+	
 	for x in ["", ".", "./"] {
 		if x.eq(path) {
 			return PathInfo::Fail("Invalid path".to_string());

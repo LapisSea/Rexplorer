@@ -222,7 +222,11 @@ component FileArea{
 
 export component HomeApp inherits Window {
 	
-	in property <UIDirectoryInfo> data;
+	in property <UIDirectoryInfo> data: {
+		files: [],
+		fullPath: "",
+		status: "The default directory could not be loaded. Something is very wrong."
+	};
 	
 	callback onFileOpen(string);
 	
@@ -271,7 +275,7 @@ component DebugWindow inherits HomeApp{
 			{name: "Peen 11", fullPath: "<idk lol>", icon: @image-url("./Bulge.png")},
 			{name: "PP 12",   fullPath: "<idk lol>", icon: @image-url("./0001.jpg" )},
 		],
-		fullPath: "<current path>",
+		fullPath: "C:/path/thing/idk",
 		status: "Data has not been loaded yet."
 	};
 }
