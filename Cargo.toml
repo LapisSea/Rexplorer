@@ -19,7 +19,8 @@ open = "4.0.1"
 rust-embed = { version="6.6.1", features=["include-exclude", "compression"] }
 threadpool = "1.8.1"
 rand = "0.8.5"
-normpath = { version="1.1.1", features=["localization"] }
+normpath = { version = "1.1.1", features = ["localization"] }
+zip = "0.6.4"
 
 [build-dependencies]
 slint-build = "1.0.0"

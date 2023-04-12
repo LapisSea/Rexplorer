@@ -1,9 +1,8 @@
 use std::{fmt, fs, thread};
 use std::collections::{HashMap, HashSet};
-use std::fmt::Display;
-use std::ops::{Deref, DerefMut};
+use std::fmt::{Display, Formatter, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::sync::mpsc::Sender;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
@@ -35,9 +34,11 @@ pub struct GlobalIcons {
 
 impl GlobalIcons {
 	pub fn read() -> Self {
+		let folder = thread::spawn(|| Arc::new(RgbImg::read(">>win-folder.png").unwrap()));
+		let default = thread::spawn(|| Arc::new(RgbImg::read(">>default.png").unwrap()));
 		Self {
-			folder: Arc::new(RgbImg::read(">>win-folder.png").unwrap()),
-			default: Arc::new(RgbImg::read(">>default.png").unwrap()),
+			folder: folder.join().unwrap(),
+			default: default.join().unwrap(),
 			iconCache: Default::default(),
 			workerId: Default::default(),
 		}
@@ -87,17 +88,6 @@ pub fn loadAsyncIcons(global: Arc<RwLock<GlobalIcons>>, paths: Vec<PathBuf>, sen
 		
 		for x in paths.iter() {
 			let pathStr = x.to_str().unwrap();
-			
-			if let Ok(meta) = fs::metadata(x) {
-				if meta.is_dir() {
-					let global = global.read().unwrap();
-					let _ = send.send(FileLoaderAction::UpdateFile(LoadedIcon {
-						image: global.folder.clone(),
-						path: pathStr.to_string(),
-					}));
-				}
-			}
-			
 			let mut global = global.write().unwrap();
 			
 			if let Some(stage) = global.iconCache.get_mut(pathStr) {
@@ -221,10 +211,10 @@ pub fn startIconGC(state: Arc<RwLock<GlobalIcons>>) {
 			
 			let now = SystemTime::now();
 			
-			cache.retain(|k, val| {
+			cache.retain(|_, val| {
 				match val {
 					LoadStage::Loading => {}
-					LoadStage::Loaded(t, ico) => {
+					LoadStage::Loaded(t, _ico) => {
 						let age = now.duration_since(*t).unwrap().as_secs_f64();
 						
 						let minAge = 5.0;
@@ -233,7 +223,7 @@ pub fn startIconGC(state: Arc<RwLock<GlobalIcons>>) {
 							let fac = 1.0_f64.min((age - minAge) / (maxAge - minAge));
 							let fac = fac.powi(4);
 							if rng.gen_bool(fac) {
-								// if !ico.isDefault() { println!("Yeet {k} \t {age} with probability of {fac}"); }
+								// if !_ico.isDefault() { println!("Yeet {k} \t {age} with probability of {fac}"); }
 								return false;
 							}
 						}

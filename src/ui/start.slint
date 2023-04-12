@@ -11,6 +11,10 @@ export struct UIDirectoryInfo{
 	files: [UIFile],
 	status: string,
 }
+export struct UIPathComponent{
+	fullPath: string,
+	name: string,
+}
 
 component FileBox inherits TouchArea{
 	in property <UIFile> data;
@@ -108,29 +112,157 @@ component FileBox inherits TouchArea{
 	]
 }
 
+export global Logic {
+    pure callback makeComponents(string) -> [UIPathComponent];
+    pure callback separator() -> string;
+}
+
+component PathComponent{
+	in property <UIPathComponent> data;
+	callback clickedPath(string);
+	
+	Rectangle {
+		// width: parent.width;
+		// height: parent.height;
+		
+		property <float> transp: 0.0;
+		
+		background: rgba(0.5,0.5,0.5, transp);
+		
+		animate transp { duration: 70ms; }
+		
+		states [
+			focused when ta.has-hover: {
+				transp: 0.4;
+			}
+		 ]
+	}
+	
+	txt:=Text{
+		vertical-alignment: center;
+		height: parent.height;
+		text: data.name;
+	}
+	
+	ta:=TouchArea{
+		mouse-cursor: pointer;
+		clicked => {
+			clickedPath(data.fullPath);
+		}
+	}
+	
+	width: txt.width+6px;
+}
+
+component PathEditor{
+	in property <string> path;
+	callback accepted(string);
+	callback onSegmentClicked(string);
+	height: 36px;
+	
+	horizontal-stretch: 1;
+	vertical-stretch: 0;
+	
+	property <bool> editing;
+	
+	ta:=TouchArea {
+		clicked => {
+			editing=!editing;
+			le.focus();
+			le.text=path;
+		}
+	}
+	
+	le:=TextInput {
+		height: parent.height;
+		text: path;
+		
+		vertical-alignment: center;
+		
+		x: ta.x + 8px;
+		width: txt.min-width +8px;
+		
+		visible: editing;
+		
+		accepted => {
+			parent.accepted(self.text);
+			editing=false;
+		}
+	}
+	
+	txt := Text {
+		font-weight: 600;
+		text <=>le.text;
+		visible: false;
+	}
+	
+	if !editing:HorizontalLayout{
+		alignment: start;
+		spacing: -2px;
+		padding: 3px;
+		
+		property <string> separator: Logic.separator();
+		
+		for comp in Logic.makeComponents(path):HorizontalLayout{
+			spacing: parent.spacing;
+			alignment: center;
+			
+			PathComponent{
+				data: comp;
+				clickedPath(path)=>{
+					onSegmentClicked(path);
+				}
+			}
+			Text{
+				vertical-alignment: center;
+				text: separator;
+			}
+		}
+	}
+	
+	
+}
 
 component FileArea{
 	in property <UIDirectoryInfo> info;
 	//in property <bool> boxView;
 	in property <int> boxSize;
+	in property <image> loadIcon;
 	
 	callback onFileOpen(string);
 	
-	preferred-height: 100000000px;
+	horizontal-stretch: 1;
+	vertical-stretch: 1;
 	
 	VerticalLayout {
 		HorizontalLayout {
-			Text {
+			
+			if loadIcon.width==0:Text {
+				width: 50px;
 				text: "Path: ";
 				vertical-alignment: center;
 				horizontal-alignment: center;
+				
 			}
-			le:=LineEdit {
-				text: info.fullPath;
+			if loadIcon.width!=0:HorizontalLayout{
+				width: 50px;
+				Rectangle {}
+				img:=Image {
+					source: loadIcon;
+				}
+				Rectangle {}
+			}
+			
+			le:=PathEditor {
+				path: info.fullPath;
 				accepted(text) => { 
 					onFileOpen(text);
-					le.text=info.fullPath;
-				 }
+					le.path=info.fullPath;
+				}
+				onSegmentClicked(path) => {
+					onFileOpen(path);
+					le.path=info.fullPath;
+				}
 			}
 		}
 		
@@ -187,7 +319,7 @@ component FileArea{
 								size: boxSize;
 								onFileOpen(d) => {
 									onFileOpen(d);
-									le.text=info.fullPath;
+									le.path=info.fullPath;
 								}
 							}
 						}
@@ -203,7 +335,7 @@ component FileArea{
 						size: boxSize;
 						onFileOpen(d) => {
 							onFileOpen(d);
-							le.text=info.fullPath;
+							le.path=info.fullPath;
 						}
 						
 						x: mod(i, columns)*(boxSize + inBetween/1px)*1px + inBetween;
@@ -237,6 +369,10 @@ export component HomeApp inherits Window {
 	
 	title: "Rexplorer";
 	
+	in property <image> loadIcon;
+	
+	icon: @image-url("./icon.png");
+	
 	VerticalLayout{
 		HorizontalLayout {
 			Button {
@@ -249,6 +385,7 @@ export component HomeApp inherits Window {
 		}
 		
 		FileArea{
+			loadIcon<=>loadIcon;
 			info: data;
 			boxSize: 120;
 			onFileOpen(d) => {
