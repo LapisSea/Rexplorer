@@ -179,9 +179,11 @@ fn loadFromPath(state: Arc<RwLock<GlobalIcons>>, path: PathBuf) -> Arc<RgbImg> {
 			}
 		}
 	}
-	
+
 	let mut icon = None;
-	if path.extension().and_then(|s| s.to_str()).filter(|s| ["jpg", "png"].contains(s)).is_some() {
+	if path.extension().and_then(|s| s.to_str()).filter(|s|
+		["PNG", "JPEG","JPG", "GIF", "BMP", "ICO", "TIFF", "WebP", "AVIF", "PNM", "DDS", "TGA"].contains(&s.to_uppercase().as_str())
+	).is_some() {
 		icon = RgbImg::read(path.as_os_str().to_str().unwrap()).ok();
 	}
 	
