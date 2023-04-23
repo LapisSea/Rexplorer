@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 #![allow(unused_imports)]
+#![windows_subsystem = "windows"]
 
 use std::{env, fmt, fs, thread};
 use std::collections::HashMap;
@@ -14,6 +15,7 @@ use std::time::{Duration, SystemTime};
 
 use normpath::PathExt;
 use slint::{Image, Model, ModelRc, PhysicalPosition, PhysicalSize, SharedString, SharedVector, Timer, TimerMode, WindowPosition, WindowSize};
+use slint::platform::SetPlatformError;
 use slint::private_unstable_api::re_exports::SharedVectorModel;
 
 use config::WindowBox;
@@ -38,6 +40,25 @@ struct DirectoryReader {
 	directory: UIDirectoryInfo,
 	pathIndex: HashMap<String, usize>,
 	receiver: Receiver<FileLoaderAction>,
+}
+
+impl DirectoryReader {
+	fn make(path: &str, status: &str, files: SharedVector<UIFile>, receiver: Receiver<FileLoaderAction>) -> Self {
+		let mut pathIndex = HashMap::new();
+		for (i, f) in files.iter().enumerate() {
+			pathIndex.insert(f.fullPath.to_string(), i);
+		}
+		
+		Self {
+			directory: UIDirectoryInfo {
+				files: ModelRc::new(SharedVectorModel::from(files)),
+				fullPath: SharedString::from(path),
+				status: SharedString::from(status),
+			},
+			pathIndex,
+			receiver,
+		}
+	}
 }
 
 impl Display for UIFile {
@@ -224,7 +245,7 @@ fn poolMediaChanges(dirReader: &RwLock<Option<DirectoryReader>>, globalIcon: &Rw
 	
 	if discard {
 		*dirReader.write().unwrap() = None;
-		println!("Done updating");
+		// println!("Done updating");
 	}
 }
 
@@ -345,40 +366,26 @@ fn fetchInfo(state: Arc<RwLock<GlobalIcons>>, path: &str) -> PathInfo {
 	
 	match fs::read_dir(path) {
 		Ok(rd) => {
-			
 			//Collect
-			let paths: Vec<PathBuf> = rd.into_iter().filter_map(|p| p.ok()).map(|p| p.path()).collect();
+			let paths: Arc<Vec<PathBuf>> =Arc::new(rd.into_iter().filter_map(|p| p.ok()).map(|p| p.path()).collect());
 			
-			let (send, receive) = channel();
+			let (send, receiver) = channel();
 			send.send(FileLoaderAction::MakeUI).unwrap();
 			
 			icon::loadAsyncIcons(state.clone(), paths.clone(), send);
 			
 			let icon = { state.read().unwrap().default.clone() }.asImage();
 			
-			//Initial populate
-			let fileVec: SharedVector<UIFile> = paths.into_iter().map(|path| UIFile {
+			let files: SharedVector<UIFile> = paths.deref().iter().map(|path| UIFile {
 				name: SharedString::from(path.file_name().and_then(|o| o.to_str())
 				                             .map(|s| s.to_string()).unwrap_or("".to_string())),
 				fullPath: SharedString::from(path.to_str().unwrap_or("")),
 				icon: icon.clone(),
 			}).collect();
 			
-			let mut pathIndex = HashMap::new();
-			for (i, f) in fileVec.iter().enumerate() {
-				pathIndex.insert(f.fullPath.to_string(), i);
-			}
-			let directory = UIDirectoryInfo {
-				files: ModelRc::new(SharedVectorModel::from(fileVec)),
-				fullPath: SharedString::from(path),
-				status: SharedString::from("Loading... please wait"),
-			};
+			let status = if files.is_empty() { "This folder is empty" } else { "Ok directory" };
 			
-			PathInfo::Dir(DirectoryReader {
-				directory,
-				pathIndex,
-				receiver: receive,
-			})
+			PathInfo::Dir(DirectoryReader::make(path, status, files, receiver))
 		}
 		Err(err) => {
 			if let Ok(meta) = fs::metadata(path) {

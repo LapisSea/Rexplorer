@@ -77,7 +77,7 @@ impl GlobalIcons {
 	}
 }
 
-pub fn loadAsyncIcons(global: Arc<RwLock<GlobalIcons>>, paths: Vec<PathBuf>, send: Sender<FileLoaderAction>) {
+pub fn loadAsyncIcons(global: Arc<RwLock<GlobalIcons>>, paths: Arc<Vec<PathBuf>>, send: Sender<FileLoaderAction>) {
 	let workId = { global.write().unwrap().newId() };
 	
 	thread::spawn(move || {
